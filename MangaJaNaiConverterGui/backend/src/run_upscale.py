@@ -1474,8 +1474,8 @@ def parse_settings_from_cli():
                         help="Used for calculating which model will be used. Default: 2")
     parser.add_argument("--device-index",
                         type=int,
-                        default=0,
-                        help="Device used to run upscaling jobs in case more than one is available. Default: 0")
+                        default=1,
+                        help="Device index: 0=CPU, 1=first GPU, 2=second GPU, etc. Default: 1 (first GPU)")
 
     args = parser.parse_args()
 
