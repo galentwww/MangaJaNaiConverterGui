@@ -134,29 +134,38 @@ class PyTorchSettings:
     def device(self) -> torch.device:
         """Get the appropriate torch device"""
         detector = get_accelerator_detector()
-        
+
         # CPU override
         if self.use_cpu:
+            print(f"[Device Selection] CPU override: use_cpu=True", flush=True)
             return torch.device("cpu")
-        
+
         # Try to use the new accelerator device index first
         gpu_devices = [device for device in detector.available_devices if device.type != AcceleratorType.CPU]
-        
+
+        print(f"[Device Selection] accelerator_device_index={self.accelerator_device_index}, gpu_devices count={len(gpu_devices)}", flush=True)
+
         if gpu_devices and 0 <= self.accelerator_device_index < len(gpu_devices):
             selected_device = gpu_devices[self.accelerator_device_index]
+            print(f"[Device Selection] Using accelerator device: {selected_device.name} ({selected_device.torch_device})", flush=True)
             return selected_device.torch_device
-        
+
         # Fallback to legacy CUDA device selection for backward compatibility
         cuda_devices = detector.get_devices_by_type(AcceleratorType.CUDA)
+        print(f"[Device Selection] Fallback: gpu_index={self.gpu_index}, cuda_devices count={len(cuda_devices)}", flush=True)
         if cuda_devices and 0 <= self.gpu_index < len(cuda_devices):
-            return torch.device(f"cuda:{self.gpu_index}")
-        
+            device = torch.device(f"cuda:{self.gpu_index}")
+            print(f"[Device Selection] Using legacy CUDA device: {cuda_devices[self.gpu_index].name} ({device})", flush=True)
+            return device
+
         # Fallback to best available device
         best_device = detector.get_best_device(prefer_gpu=True)
         if best_device.type != AcceleratorType.CPU:
+            print(f"[Device Selection] Using best available device: {best_device.name} ({best_device.torch_device})", flush=True)
             return best_device.torch_device
-        
+
         # Final fallback to CPU
+        print(f"[Device Selection] Final fallback to CPU", flush=True)
         return torch.device("cpu")
 
     @property

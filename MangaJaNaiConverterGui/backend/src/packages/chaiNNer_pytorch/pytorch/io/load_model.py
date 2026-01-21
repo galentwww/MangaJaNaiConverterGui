@@ -77,6 +77,7 @@ def load_model_node(
 
     exec_options = get_settings(context)
     pytorch_device = exec_options.device
+    print(f"[Model Load] Loading model to device: {pytorch_device}", flush=True)
 
     try:
         logger.debug(f"Reading state dict from path: {path}")
