@@ -1532,7 +1532,10 @@ settings_parser = SettingsParser(
     {
         "use_cpu": settings["SelectedDeviceIndex"] == 0,
         "use_fp16": settings["UseFp16"],
-        "accelerator_device_index": settings["SelectedDeviceIndex"],
+        # Convert from full device list index (CPU=0, GPU0=1, GPU1=2, ...)
+        # to GPU-only list index (GPU0=0, GPU1=1, ...)
+        # When SelectedDeviceIndex=0 (CPU), use_cpu=True so this value won't be used
+        "accelerator_device_index": max(0, settings["SelectedDeviceIndex"] - 1),
         "budget_limit": 0,
     }
 )
@@ -1543,7 +1546,8 @@ context = _ExecutorNodeContext(ProgressController(), settings_parser, Path())
 from packages.chaiNNer_pytorch.settings import get_settings
 pytorch_settings = get_settings(context)
 selected_device = pytorch_settings.device
-print(f"[Device] use_cpu={pytorch_settings.use_cpu}, accelerator_device_index={pytorch_settings.accelerator_device_index}", flush=True)
+print(f"[Device] SelectedDeviceIndex={settings['SelectedDeviceIndex']} (0=CPU, 1+=GPU)", flush=True)
+print(f"[Device] use_cpu={pytorch_settings.use_cpu}, accelerator_device_index={pytorch_settings.accelerator_device_index} (GPU list index)", flush=True)
 print(f"[Device] Selected device: {selected_device.type.upper()} ({selected_device})", flush=True)
 
 gamma1icc = get_gamma_icc_profile()
