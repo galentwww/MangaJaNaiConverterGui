@@ -1548,6 +1548,7 @@ pytorch_settings = get_settings(context)
 selected_device = pytorch_settings.device
 print(f"[Device] SelectedDeviceIndex={settings['SelectedDeviceIndex']} (0=CPU, 1+=GPU)", flush=True)
 print(f"[Device] use_cpu={pytorch_settings.use_cpu}, accelerator_device_index={pytorch_settings.accelerator_device_index} (GPU list index)", flush=True)
+print(f"[Device] use_fp16={pytorch_settings.use_fp16}", flush=True)
 print(f"[Device] Selected device: {selected_device.type.upper()} ({selected_device})", flush=True)
 
 gamma1icc = get_gamma_icc_profile()
