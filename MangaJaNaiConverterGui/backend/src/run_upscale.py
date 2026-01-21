@@ -1475,7 +1475,10 @@ def parse_settings_from_cli():
     parser.add_argument("--device-index",
                         type=int,
                         default=0,
-                        help="Device used to run upscaling jobs in case more than one is available. Default: 0")
+                        help="GPU device index (0 = first GPU, 1 = second GPU, etc.). Default: 0")
+    parser.add_argument("--use-cpu",
+                        action="store_true",
+                        help="Force using CPU instead of GPU. Not recommended for performance.")
 
     args = parser.parse_args()
 
@@ -1494,11 +1497,18 @@ def parse_manual_settings(args):
     with open(default_file_path, "r") as default_file:
         default_json = json.load(default_file)
 
-    default_json["SelectedDeviceIndex"] = int(args.device_index)
+    # CLI: --device-index is GPU index (0 = first GPU), --use-cpu forces CPU
+    # Internal: SelectedDeviceIndex 0 = CPU, 1+ = GPU index + 1
+    if args.use_cpu:
+        internal_device_index = 0  # CPU
+    else:
+        internal_device_index = args.device_index + 1  # GPU: 0->1, 1->2, etc.
+
+    default_json["SelectedDeviceIndex"] = internal_device_index
     default_json["ModelsDirectory"] = args.models_directory_path
 
     default_json["Workflows"]["$values"][0]["OutputFolderPath"] = args.output_folder_path
-    default_json["Workflows"]["$values"][0]["SelectedDeviceIndex"] = args.device_index
+    default_json["Workflows"]["$values"][0]["SelectedDeviceIndex"] = internal_device_index
     default_json["Workflows"]["$values"][0]["UpscaleScaleFactor"] = args.upscale_factor
     if args.file_path:
         default_json["Workflows"]["$values"][0]["SelectedTabIndex"] = 0
@@ -1528,14 +1538,20 @@ ARCHIVE_EXTENSIONS = ZIP_EXTENSIONS + RAR_EXTENSIONS
 loaded_models = {}
 system_codepage = get_system_codepage()
 
+# SelectedDeviceIndex: 0 = CPU, 1 = first GPU, 2 = second GPU, etc.
+# accelerator_device_index: 0 = first GPU, 1 = second GPU, etc. (used by gpu_devices list which excludes CPU)
+use_cpu = settings["SelectedDeviceIndex"] == 0
+accelerator_idx = max(0, settings["SelectedDeviceIndex"] - 1)  # Convert to gpu_devices index
+
 settings_parser = SettingsParser(
     {
-        "use_cpu": settings["SelectedDeviceIndex"] == 0,
+        "use_cpu": use_cpu,
         "use_fp16": settings["UseFp16"],
-        "accelerator_device_index": settings["SelectedDeviceIndex"],
+        "accelerator_device_index": accelerator_idx,
         "budget_limit": 0,
     }
 )
+print(f"[Config] SelectedDeviceIndex={settings['SelectedDeviceIndex']}, use_cpu={use_cpu}, accelerator_device_index={accelerator_idx}", flush=True)
 
 context = _ExecutorNodeContext(ProgressController(), settings_parser, Path())
 
