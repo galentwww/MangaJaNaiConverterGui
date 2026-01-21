@@ -1537,9 +1537,14 @@ settings_parser = SettingsParser(
     }
 )
 
-print("settings", settings_parser.get_int("accelerator_device_index", 0), flush=True)
-
 context = _ExecutorNodeContext(ProgressController(), settings_parser, Path())
+
+# Log device selection info
+from packages.chaiNNer_pytorch.settings import get_settings
+pytorch_settings = get_settings(context)
+selected_device = pytorch_settings.device
+print(f"[Device] use_cpu={pytorch_settings.use_cpu}, accelerator_device_index={pytorch_settings.accelerator_device_index}", flush=True)
+print(f"[Device] Selected device: {selected_device.type.upper()} ({selected_device})", flush=True)
 
 gamma1icc = get_gamma_icc_profile()
 dotgain20icc = get_dot20_icc_profile()
