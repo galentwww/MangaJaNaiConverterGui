@@ -4,6 +4,7 @@ import io
 import json
 import os
 import platform
+import shutil
 import sys
 import time
 from collections.abc import Callable
@@ -48,6 +49,98 @@ from api import (
     NodeContext,
     SettingsParser,
 )
+
+SKIP_LARGE_LONG_IMAGES_DEFAULT_ENABLED = True
+SKIP_LARGE_LONG_MAX_SIDE_DEFAULT = 3000
+SKIP_LARGE_LONG_MIN_ASPECT_RATIO_DEFAULT = 2.8
+SKIP_LARGE_LONG_MIN_PIXELS_DEFAULT = 9_000_000
+
+skip_large_long_images_enabled = SKIP_LARGE_LONG_IMAGES_DEFAULT_ENABLED
+skip_large_long_max_side = SKIP_LARGE_LONG_MAX_SIDE_DEFAULT
+skip_large_long_min_aspect_ratio = SKIP_LARGE_LONG_MIN_ASPECT_RATIO_DEFAULT
+skip_large_long_min_pixels = SKIP_LARGE_LONG_MIN_PIXELS_DEFAULT
+
+
+def _parse_bool_setting(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _parse_int_setting(value: Any, default: int, *, min_value: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(parsed, min_value)
+
+
+def _parse_float_setting(value: Any, default: float, *, min_value: float = 1.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(parsed, min_value)
+
+
+def _should_passthrough_image(original_width: int, original_height: int) -> bool:
+    if not skip_large_long_images_enabled:
+        return False
+
+    if original_width <= 0 or original_height <= 0:
+        return False
+
+    max_side = max(original_width, original_height)
+    min_side = max(1, min(original_width, original_height))
+    aspect_ratio = max_side / min_side
+    total_pixels = original_width * original_height
+
+    large_long = (
+        max_side >= skip_large_long_max_side
+        and aspect_ratio >= skip_large_long_min_aspect_ratio
+    )
+    huge_resolution = total_pixels >= skip_large_long_min_pixels
+    return large_long or huge_resolution
+
+
+def _passthrough_reason(original_width: int, original_height: int) -> str:
+    max_side = max(original_width, original_height)
+    min_side = max(1, min(original_width, original_height))
+    aspect_ratio = max_side / min_side
+    total_pixels = original_width * original_height
+
+    reasons: list[str] = []
+    if (
+        max_side >= skip_large_long_max_side
+        and aspect_ratio >= skip_large_long_min_aspect_ratio
+    ):
+        reasons.append(
+            (
+                f"max_side={max_side}>={skip_large_long_max_side} and "
+                f"aspect={aspect_ratio:.2f}>={skip_large_long_min_aspect_ratio}"
+            )
+        )
+    if total_pixels >= skip_large_long_min_pixels:
+        reasons.append(f"pixels={total_pixels}>={skip_large_long_min_pixels}")
+
+    if reasons:
+        return "; ".join(reasons)
+    return "rule matched"
+
+
+def _build_passthrough_rel_path(output_filename_rel: str, source_filename: str) -> str:
+    source_suffix = Path(source_filename).suffix
+    if not source_suffix:
+        return output_filename_rel
+    return str(Path(output_filename_rel).with_suffix(source_suffix))
 
 
 class _ExecutorNodeContext(NodeContext):
@@ -590,6 +683,19 @@ def preprocess_worker_archive_file(
                 # image_bytes = io.BytesIO(image_data)
                 image = _read_image(image_data, filename)
                 print("read image", filename, flush=True)
+                image_h, image_w, _ = get_h_w_c(image)
+                if _should_passthrough_image(image_w, image_h):
+                    print(
+                        "[SkipUpscale] archive passthrough: "
+                        f"{decoded_filename} ({image_w}x{image_h}) "
+                        f"{_passthrough_reason(image_w, image_h)}",
+                        flush=True,
+                    )
+                    upscale_queue.put(
+                        (image_data, decoded_filename, False, False, None, None, None, None)
+                    )
+                    continue
+
                 chain, is_grayscale, original_width, original_height = (
                     get_chain_for_image(
                         image,
@@ -749,7 +855,41 @@ def preprocess_worker_folder(
                         continue
 
                     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
-                    image = _read_image_from_path(os.path.join(root, filename))
+                    image_path = os.path.join(root, filename)
+                    image = _read_image_from_path(image_path)
+                    image_h, image_w, _ = get_h_w_c(image)
+                    if _should_passthrough_image(image_w, image_h):
+                        passthrough_rel_path = _build_passthrough_rel_path(
+                            output_filename_rel,
+                            filename,
+                        )
+                        passthrough_output_path = os.path.join(
+                            output_folder_path,
+                            passthrough_rel_path,
+                        )
+                        if (
+                            not overwrite_existing_files
+                            and os.path.isfile(passthrough_output_path)
+                        ):
+                            print(
+                                f"file exists, skip: {passthrough_output_path}",
+                                flush=True,
+                            )
+                            continue
+
+                        os.makedirs(
+                            os.path.dirname(passthrough_output_path),
+                            exist_ok=True,
+                        )
+                        shutil.copy2(image_path, passthrough_output_path)
+                        print(
+                            "[SkipUpscale] folder passthrough copy: "
+                            f"{filename_rel} -> {passthrough_rel_path} "
+                            f"({image_w}x{image_h}) "
+                            f"{_passthrough_reason(image_w, image_h)}",
+                            flush=True,
+                        )
+                        continue
 
                     chain, is_grayscale, original_width, original_height = (
                         get_chain_for_image(
@@ -900,6 +1040,18 @@ def preprocess_worker_image(
         os.makedirs(os.path.dirname(output_image_path), exist_ok=True)
         # with Image.open(input_image_path) as img:
         image = _read_image_from_path(input_image_path)
+        image_h, image_w, _ = get_h_w_c(image)
+        if _should_passthrough_image(image_w, image_h):
+            shutil.copy2(input_image_path, output_image_path)
+            print(
+                "[SkipUpscale] image passthrough copy: "
+                f"{input_image_path} -> {output_image_path} "
+                f"({image_w}x{image_h}) "
+                f"{_passthrough_reason(image_w, image_h)}",
+                flush=True,
+            )
+            upscale_queue.put(UPSCALE_SENTINEL)
+            return
 
         chain, is_grayscale, original_width, original_height = get_chain_for_image(
             image,
@@ -1516,6 +1668,22 @@ sys.stdout.reconfigure(encoding="utf-8")  # type: ignore
 settings = parse_settings_from_cli()
 
 workflow = settings["Workflows"]["$values"][settings["SelectedWorkflowIndex"]]
+skip_large_long_images_enabled = _parse_bool_setting(
+    workflow.get("SkipLargeLongImages", skip_large_long_images_enabled),
+    SKIP_LARGE_LONG_IMAGES_DEFAULT_ENABLED,
+)
+skip_large_long_max_side = _parse_int_setting(
+    workflow.get("SkipLargeLongMaxSide", skip_large_long_max_side),
+    SKIP_LARGE_LONG_MAX_SIDE_DEFAULT,
+)
+skip_large_long_min_aspect_ratio = _parse_float_setting(
+    workflow.get("SkipLargeLongMinAspectRatio", skip_large_long_min_aspect_ratio),
+    SKIP_LARGE_LONG_MIN_ASPECT_RATIO_DEFAULT,
+)
+skip_large_long_min_pixels = _parse_int_setting(
+    workflow.get("SkipLargeLongMinPixels", skip_large_long_min_pixels),
+    SKIP_LARGE_LONG_MIN_PIXELS_DEFAULT,
+)
 models_directory = settings["ModelsDirectory"]
 
 UPSCALE_SENTINEL = (None, None, None, None, None, None, None, None)
@@ -1549,6 +1717,14 @@ selected_device = pytorch_settings.device
 print(f"[Device] SelectedDeviceIndex={settings['SelectedDeviceIndex']} (0=CPU, 1+=GPU)", flush=True)
 print(f"[Device] use_cpu={pytorch_settings.use_cpu}, accelerator_device_index={pytorch_settings.accelerator_device_index} (GPU list index)", flush=True)
 print(f"[Device] Selected device: {selected_device.type.upper()} ({selected_device})", flush=True)
+print(
+    "[SkipUpscale] policy "
+    f"enabled={skip_large_long_images_enabled} "
+    f"max_side>={skip_large_long_max_side} "
+    f"min_aspect>={skip_large_long_min_aspect_ratio} "
+    f"min_pixels>={skip_large_long_min_pixels}",
+    flush=True,
+)
 
 gamma1icc = get_gamma_icc_profile()
 dotgain20icc = get_dot20_icc_profile()
