@@ -40,6 +40,10 @@
         "DisplayDeviceHeight": 1872,
         "DisplayPortraitSelected": true,
         "ShowAdvancedSettings": false,
+        "SkipLargeLongImages": true,
+        "SkipLargeLongMaxSide": 3000,
+        "SkipLargeLongMinAspectRatio": 2.8,
+        "SkipLargeLongMinPixels": 9000000,
         "Chains": {
           "$type": "Avalonia.Collections.AvaloniaList`1[[MangaJaNaiConverterGui.ViewModels.UpscaleChain, MangaJaNaiConverterGui]], Avalonia.Base",
           "$values": [
